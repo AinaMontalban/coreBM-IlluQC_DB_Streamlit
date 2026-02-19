@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  db:
+    image: postgres:15
+    restart: always
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: illuqcdb
+    volumes:
+      - ./init_db:/docker-entrypoint-initdb.d
+    ports:
+      - "5432:5432"
+
+  streamlit:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    depends_on:
+      - db
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: illuqcdb
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+    # Make the host port configurable via STREAMLIT_PORT environment variable
+    # Usage: STREAMLIT_PORT=8502 docker-compose up --build
+    ports:
+      - "${STREAMLIT_PORT:-8501}:8501"
+    restart: on-failure
+
+  loader:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    depends_on:
+      - db
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: illuqcdb
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      STREAMLIT_SERVER_ADDRESS: "0.0.0.0"
+    # bind-mount host data directory so CSVs under ./data are available at /app/data
+    volumes:
+      - ./data:/app/data:ro
+      - ./init_db:/app/init_db:ro
+    # This service is intended to be run on-demand with:
+    #   docker-compose run --rm loader
+    restart: 'no'

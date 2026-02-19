@@ -1,0 +1,12 @@
+{
+  "samples": ["sample_id", "sex", "virtual_panel"],
+  "runs": ["run_id", "run_description", "run_type"],
+  "instruments": ["instrument_id", "instrument_name", "instrument_type"],
+  "sequencing_chemistry": ["sequencing_chemistry_id", "flowcell_name", "flowcell_part_number", "reagent_kit_name", "reagent_kit_part_number", "instrument_model"],
+  "library": ["library_id", "library_name", "library_version", "library_type"],
+  "protocols": ["protocol_id", "protocol_name", "protocol_type", "version", "description"],
+  "extraction_qc": ["sample_id", "day_id", "concentration", "a260_a280_ratio", "a260_a230_ratio"],
+  "library_qc": ["sample_id", "library_id", "day_id", "concentration", "fragment_size"],
+  "sequencing_qc": ["run_id", "run_folder", "day_id", "instrument_id", "flowcell_part_number", "reagent_kit_part_number", "num_cycles", "num_samples", "cluster_density", "cluster_pf", "q30", "yield", "percent_phix_aligned"],
+  "sample_bioinfo_analyses_qc": ["sample_id", "run_id", "library_id", "day_id", "total_reads_r1", "total_duplicated_reads_r1", "gc_content_r1", "total_reads_r2", "total_duplicated_reads_r2", "gc_content_r2", "total_sequences", "reads_mapped", "reads_unmapped", "reads_duplicated", "reads_mq0", "average_length", "insert_size_average", "mean_coverage", "cov_20x", "cov_38x", "percent_on_target_reads", "coverage_uniformity"]
+}
