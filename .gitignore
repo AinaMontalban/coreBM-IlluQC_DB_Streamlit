@@ -1,0 +1,2 @@
+# Streamlit secrets (keep secrets.toml.example in version control instead)
+.streamlit/secrets.toml

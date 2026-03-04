@@ -17,10 +17,10 @@ docker-compose up --build
 - This starts Postgres and Streamlit (default: http://localhost:8501).
 
 ### 2. Initialize the Database Schema
-- The schema is defined in `init_db/IlluQC_Database_schema_postgres.sql`.
+- The schema is defined in `init_db/IlluQC_Database_schema_postgres_multiplatform.sql`.
 - On first run, the schema is loaded automatically. To reapply manually:
 ```sh
-docker-compose exec db psql -U postgres -d exampledb -f /docker-entrypoint-initdb.d/IlluQC_Database_schema_postgres.sql
+docker-compose exec db psql -U postgres -d exampledb -f /docker-entrypoint-initdb.d/IlluQC_Database_schema_postgress_multiplatform.sql
 ```
 
 ### 3. Load Data from CSV Files

@@ -26,21 +26,23 @@ docker-compose exec db psql -U postgres -d exampledb -f /docker-entrypoint-initd
 ### 3. Load Data from CSV Files
 
 ```sh
-
 docker-compose run --rm \
+  -v "$(pwd)/../real_data:/app/real_data:ro" \
   loader python /app/upload_CSV.py \
   --host db --port 5432 --db illuqcdb --user postgres --password postgres \
   --table instruments --csv /app/real_data/instruments/IlluQC_instruments.csv \
   --fields /app/init_db/required_fields.json
 
 docker-compose run --rm \
+        -v "$(pwd)/../real_data:/app/real_data:ro" \
         loader python /app/upload_CSV.py \
         --host db --port 5432 --db illuqcdb --user postgres --password postgres \
         --table sequencing_chemistry --csv "/app/real_data/sequencing_chemistry.csv" \
         --fields /app/init_db/required_fields.json
 
-db_folder=illuqc_db/
-for run_file in "$db_folder"/*-run_info.csv; do
+db_folder="/Users/amontalban/HCB-Work/Doctorat/P005-multiplatform/real_data/RUNS_3"
+
+for run_file in "$db_folder"/*-sequencing-info.csv; do
     run=$(basename "$run_file")
     # example: R3118_run_info.csv
     # get run id from the file name
@@ -48,19 +50,20 @@ for run_file in "$db_folder"/*-run_info.csv; do
     echo "Uploading data for run: $run_id"
 
     docker-compose run --rm \
-        -v "$(pwd)/../real_data:/app/illuqc_db_files:ro" \
+        -v "$(pwd)/../real_data:/app/real_data:ro" \
         loader python /app/upload_CSV.py \
         --host db --port 5432 --db illuqcdb --user postgres --password postgres \
-        --table runs --csv "/app/illuqc_db_files/${run_id}-run_info.csv" \
+        --table sequencing_run --csv "/app/real_data/RUNS/${run_id}-sequencing-info.csv" \
         --fields /app/init_db/required_fields.json
     
     docker-compose run --rm \
-        -v "$(pwd)/../real_data:/app/illuqc_db_files:ro" \
+        -v "$(pwd)/../real_data:/app/real_data:ro" \
         loader python /app/upload_CSV.py \
         --host db --port 5432 --db illuqcdb --user postgres --password postgres \
-        --table sequencing_qc --csv "/app/illuqc_db_files/${run_id}-sequencing_qc.csv" \
+        --table sequencing_qc_metrics --csv "/app/real_data/RUNS/${run_id}-sequencing-metrics.csv" \
         --fields /app/init_db/required_fields.json
 done
+
 ```
 
 

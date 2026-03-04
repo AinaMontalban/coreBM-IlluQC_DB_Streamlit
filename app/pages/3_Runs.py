@@ -2,208 +2,207 @@
 import streamlit as st
 import pandas as pd
 import altair as alt
-from sqlalchemy import create_engine
 import plotly.express as px
+
+from db import get_engine
+import queries
+from constants import COLUMN_LABELS, METRIC_LABEL_MAP
 
 st.set_page_config(page_title="Runs", layout="wide")
 
 # use column names except for 'run_id', 'day_id', 'instrument_id', 'flowcell_part_number', 'reagent_kit_part_number', 'num_samples'
 st.write("# Runs")
 
-# Connect to PostgreSQL directly
-DB_HOST = "db"
-DB_PORT = "5432"
-DB_NAME = "illuqcdb"
-DB_USER = "postgres"
-DB_PASSWORD = "postgres"
-engine = create_engine(f"postgresql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}")
-
-# Create better column names for the runs table
-columns_names_dict={
-    "run_id": "Run ID",
-    "run_description": "Run Description",
-    "day_id": "Day ID",
-    "instrument_id": "Instrument ID",
-    "instrument_model": "Instrument Model",
-    "instrument_name": "Instrument Name",
-    "sequencing_chemistry_id": "Sequencing Chemistry ID",
-    "flowcell_part_number": "Flowcell Part Number",
-    "flowcell_name": "Flowcell Name",
-    "reagent_kit_part_number": "Reagent Kit Part Number",
-    "reagent_kit_name": "Reagent Kit Name",
-    "num_samples": "Number of Samples",
-    "cluster_density": "Cluster Density (K/mm²)",
-    "num_cycles": "Number of Cycles",
-    "cluster_pf": "% PF Clusters",
-    "q30": "% Q30 Reads",
-    "yield": "Yield (Gb)",
-    "percent_phix_aligned": "% PhiX Aligned"}
-
-metrics_columns = ['Cluster Density (K/mm²)', '% PF Clusters', '% Q30 Reads', 'Yield (Gb)', '% PhiX Aligned']
+engine = get_engine()
 
 
 # query all runs from the database and join with sequencing chemistry and instruments tables to get run metadata, sequencing chemistry info and instrument info for all runs
-runs_df = pd.read_sql_query(
-    """
-    SELECT sqc.*, sc.*, inst.instrument_model, inst.instrument_name, r.run_description
-    FROM sequencing_qc sqc
-    JOIN sequencing_chemistry sc ON sqc.sequencing_chemistry_id = sc.sequencing_chemistry_id
-    JOIN instruments inst ON sqc.instrument_id = inst.instrument_id
-    JOIN runs r ON sqc.run_id = r.run_id
-    """,
-    engine
-)
+runs_df = queries.get_runs_with_chemistry(engine)
 
-# remove duplicated columns from instruments table
-runs_df = runs_df.loc[:, ~runs_df.columns.duplicated()]
+if runs_df.empty:
+    st.warning("No sequencing runs found in the database.")
+    st.stop()
+
+metrics_df = queries.get_sequencing_metrics(engine)
 
 # change column names in the database query
-runs_df = runs_df.rename(columns=columns_names_dict)
+runs_df = runs_df.rename(columns=COLUMN_LABELS)
+
+metrics_df["metric_label"] = metrics_df["metric_name"].fillna(metrics_df["metric_id"])
+metrics_df["metric_label"] = metrics_df["metric_label"].replace(METRIC_LABEL_MAP)
+
+# Build a lookup: metric_label → platform_id (from qc_metric_definitions)
+metric_platform_lookup = (
+    metrics_df[["metric_label", "metric_platform_id"]]
+    .drop_duplicates("metric_label")
+    .set_index("metric_label")["metric_platform_id"]
+    .to_dict()
+)
+
+metrics_pivot = (
+    metrics_df.pivot_table(
+        index=["run_id", "day_id"],
+        columns="metric_label",
+        values="value_number",
+        aggfunc="first",
+    )
+    .reset_index()
+)
+
+runs_with_metrics = runs_df.merge(
+    metrics_pivot,
+    left_on=["Run ID", "Day ID"],
+    right_on=["run_id", "day_id"],
+    how="left",
+)
+
+metrics_columns = [
+    col
+    for col in metrics_pivot.columns
+    if col not in {"run_id", "day_id"}
+]
 
 # Define runs_ids
-runs_ids = runs_df[['Run ID']].drop_duplicates().sort_values(by='Run ID', ascending=False)
+runs_ids = runs_df[["Run ID", "Day ID"]].drop_duplicates().sort_values(
+    by=["Run ID", "Day ID"], ascending=False
+)
 
 left_column, right_column = st.columns(2)
 
 with left_column:
     run_option = st.selectbox(
-        "Select Run ID:",
-        runs_ids,
+        "Select Run:",
+        runs_ids["Run ID"],
         index=None,
         placeholder="Write run ID...",
     )
 
     if run_option is None:
         st.write("Please select a Run ID to see the details.")
-    elif run_option not in runs_ids['Run ID'].values:
+    elif run_option not in runs_ids["Run ID"].values:
         st.write("Run ID not found in the database. Please select a valid Run ID.")
-    else:        
-        # query sequencing_qc and join with sequencing_chemistry and instruments tables to get sequencing qc metrics and instrument info for the selected run
-        selected_run_df = pd.read_sql_query(
-            f"""
-            SELECT sqc.*, sc.*, inst.instrument_model, inst.instrument_name, r.run_description
-            FROM sequencing_qc sqc
-            JOIN sequencing_chemistry sc ON sqc.sequencing_chemistry_id = sc.sequencing_chemistry_id
-            JOIN instruments inst ON sqc.instrument_id = inst.instrument_id
-            JOIN runs r ON sqc.run_id = r.run_id
-            WHERE sqc.run_id = '{run_option}'
-            """,
-            engine
-        )
+    else:
+        selected_row = runs_ids[runs_ids["Run ID"] == run_option].iloc[0]
+        selected_run_id = selected_row["Run ID"]
+        selected_day_id = selected_row["Day ID"]
 
-        # remove duplicated columns from instruments table
-        selected_run_df = selected_run_df.loc[:, ~selected_run_df.columns.duplicated()]
-        # change column names in the database query
-        selected_run_df = selected_run_df.rename(columns=columns_names_dict)
+        selected_run_df = runs_df[
+            (runs_df["Run ID"] == selected_run_id)
+            & (runs_df["Day ID"] == selected_day_id)
+        ].copy()
+
+        if selected_run_df.empty:
+            st.error("Run data could not be loaded. Please try another run.")
+            st.stop()
+
+        selected_metrics_df = metrics_df[
+            (metrics_df["run_id"] == selected_run_id)
+            & (metrics_df["day_id"] == selected_day_id)
+        ].copy()
+        selected_metrics_df["metric_label"] = selected_metrics_df["metric_label"].fillna(
+            selected_metrics_df["metric_id"]
+        )
         # transpose the dataframe to have metrics as rows and values in a single column
         #selected_run_df = selected_run_df.melt(id_vars=['Run ID'], var_name='Metric', value_name='Value').drop(columns=['Run ID'])
 
         # Display run metadata as text
         container = st.container(border=True)
         container.write(f"**Run Description:** {selected_run_df['Run Description'].values[0]}")
-        container.write(f"**Day ID:** {selected_run_df.loc[selected_run_df['Run ID'] == run_option, 'Day ID'].values[0]}")
-        container.write(f"**Instrument Name:** {selected_run_df.loc[selected_run_df['Run ID'] == run_option, 'Instrument Name'].values[0]}")
-        container.write(f"**Flowcell:** {selected_run_df.loc[selected_run_df['Run ID'] == run_option, 'Flowcell Name'].values[0]}")
-        container.write(f"**Reagent Kit:** {selected_run_df.loc[selected_run_df['Run ID'] == run_option, 'Reagent Kit Name'].values[0]}")
-        container.write(f"**Number of Samples:** {selected_run_df.loc[selected_run_df['Run ID'] == run_option, 'Number of Samples'].values[0]}")
-        container.write(f"**Number of Cycles:** {selected_run_df.loc[selected_run_df['Run ID'] == run_option, 'Number of Cycles'].values[0]}")
+        container.write(f"**Day ID:** {selected_run_df['Day ID'].values[0]}")
+        container.write(f"**Instrument Name:** {selected_run_df['Instrument Name'].values[0]}")
+        container.write(f"**Flowcell:** {selected_run_df['Flowcell Name'].values[0]}")
+        container.write(f"**Reagent Kit:** {selected_run_df['Reagent Kit Name'].values[0]}")
+        container.write(f"**Number of Samples:** {selected_run_df['Number of Samples'].values[0]}")
+        container.write(f"**Number of Cycles:** {selected_run_df['Number of Cycles'].values[0]}")
 
-        st.subheader(f"Sequencing metrics")
-        # select only the metrics columns to display in the table
-        df_metrics = selected_run_df[metrics_columns].copy()
-        # transpose the dataframe to have metrics as rows and values in a single column
-        df_metrics = df_metrics.melt(var_name='Metric', value_name='Value')
-         # round the values to 2 decimals
-        df_metrics['Value'] = df_metrics['Value'].round(2)
-         # display the metrics in a table
-        st.dataframe(df_metrics, use_container_width=True, hide_index=True)
+        st.subheader("Sequencing metrics")
+        if selected_metrics_df.empty:
+            st.info("No sequencing metrics found for this run.")
+        else:
+            df_metrics = selected_metrics_df[["metric_label", "value_number", "unit"]].copy()
+            df_metrics = df_metrics.rename(
+                columns={"metric_label": "Metric", "value_number": "Value", "unit": "Unit"}
+            )
+            df_metrics["Value"] = pd.to_numeric(df_metrics["Value"], errors="coerce").round(2)
+            st.dataframe(df_metrics, use_container_width=True, hide_index=True)
 
 with right_column:
+    # Filter metrics to those matching the selected run's platform
+    if run_option is not None and run_option in runs_ids["Run ID"].values:
+        selected_platform = selected_run_df["Platform"].values[0]
+        platform_metrics = [
+            col for col in metrics_columns
+            if metric_platform_lookup.get(col) in (selected_platform, None)
+        ]
+    else:
+        platform_metrics = metrics_columns
+
     metric_options = st.selectbox(
         "Select Metric to plot:",
-        metrics_columns,
+        platform_metrics,
         index=None,
         placeholder="Select metric...",
     )
 
     if metric_options is not None and run_option is not None:
-        # find runs with the same run description as the selected run
-        df_same_description = runs_df[runs_df['Run Description'] == selected_run_df['Run Description'].values[0]]
-        # find runs with the same instrument model and sequencing chemistry as the selected run
-        df_same_instrument_chemistry = df_same_description[(df_same_description['Instrument Model'] == selected_run_df['Instrument Model'].values[0]) & (df_same_description['Sequencing Chemistry ID'] == selected_run_df['Sequencing Chemistry ID'].values[0])]
-
-        selected_value = runs_df.loc[runs_df['Run ID'] == run_option, metric_options].values[0]
-        
-        
-        st.subheader(f"Distribution plot for {metric_options}")
-        # density plot to check distribution of the selected metric
-        metric = metric_options
-
-        df_plot = df_same_instrument_chemistry[[metric]].copy()
-        df_plot[metric] = pd.to_numeric(df_plot[metric], errors="coerce")
-        df_plot = df_plot.dropna(subset=[metric])
-
-
-        # Create density plot using Altair
-        # Add a line for the selected run value
-        density_chart = (
-            alt.Chart(df_plot)
-            .transform_density(metric, as_=[metric, "density"])
-            .mark_area()
-            .encode(
-                x=alt.X(f"{metric}:Q", title=metric),
-                y="density:Q",
+        df_same_description = runs_with_metrics[
+            runs_with_metrics["Run Description"] == selected_run_df["Run Description"].values[0]
+        ]
+        df_same_instrument_chemistry = df_same_description[
+            (df_same_description["Instrument Model"] == selected_run_df["Instrument Model"].values[0])
+            & (
+                df_same_description["Sequencing Chemistry ID"]
+                == selected_run_df["Sequencing Chemistry ID"].values[0]
             )
-        )
+        ]
 
-        vline = (
-            alt.Chart(pd.DataFrame({metric: [selected_value]}))
-            .mark_rule(color="red", strokeWidth=2)
-            .encode(
-                x=alt.X(f"{metric}:Q"),
-                tooltip=[alt.Tooltip(f"{metric}:Q", title="Selected run")]
-            )
-        )
+        if df_same_instrument_chemistry.empty:
+            st.info("No comparable runs found for this instrument model and chemistry.")
+        else:
+            selected_value_series = df_same_instrument_chemistry.loc[
+                (df_same_instrument_chemistry["Run ID"] == selected_run_id)
+                & (df_same_instrument_chemistry["Day ID"] == selected_day_id),
+                metric_options,
+            ]
+            if selected_value_series.empty or pd.isna(selected_value_series.values[0]):
+                st.info(f"No value for **{metric_options}** on this run.")
+            else:
+                selected_value = selected_value_series.values[0]
 
-        chart = density_chart + vline
-        st.altair_chart(chart, use_container_width=True)
+                st.subheader(f"Distribution plot for {metric_options}")
+                metric = metric_options
 
-        # Write captions to know with how many runs the distribution is being compared and what the red line means
-        st.caption(f"The distribution is based on {len(df_plot)} runs with the same instrument model and sequencing chemistry as the selected run.The red line indicates the value of the selected metric for the run {run_option}.")
+                df_plot = df_same_instrument_chemistry[[metric]].copy()
+                df_plot[metric] = pd.to_numeric(df_plot[metric], errors="coerce")
+                df_plot = df_plot.dropna(subset=[metric])
 
-# Get all samples associated with the selected run
-if st.button("Check Samples QC") and run_option is not None and run_option in runs_ids['Run ID'].values:
+                if len(df_plot) < 2:
+                    st.info("Not enough data points to draw a density plot.")
+                else:
+                    # Create density plot using Altair
+                    density_chart = (
+                        alt.Chart(df_plot)
+                        .transform_density(metric, as_=[metric, "density"])
+                        .mark_area()
+                        .encode(
+                            x=alt.X(f"{metric}:Q", title=metric),
+                            y="density:Q",
+                        )
+                    )
 
-    # Query samples bioinfo analyses qc for the selected run and join with samples table to get sample metadata
-    samples_bioinfo_df = pd.read_sql_query(
-    f"""
-    SELECT sbaq.*, s.sex, s.virtual_panel
-    FROM sample_bioinfo_analyses_qc sbaq
-    JOIN samples s ON sbaq.sample_id = s.sample_id
-    WHERE sbaq.run_id = '{run_option}'
-    """,
-    engine
-    )
+                    vline = (
+                        alt.Chart(pd.DataFrame({metric: [selected_value]}))
+                        .mark_rule(color="red", strokeWidth=2)
+                        .encode(
+                            x=alt.X(f"{metric}:Q"),
+                            tooltip=[alt.Tooltip(f"{metric}:Q", title="Selected run")]
+                        )
+                    )
 
-    num_samples_in_run = len(samples_bioinfo_df)
-    st.metric(label="Number of Samples in this Run", value=num_samples_in_run)
-    
-    # Display a bar chart with total reads per sample in this run
-    st.subheader("Primary Analysis: Total Reads per Sample")
-    # Melt the dataframe for better plotting
-    samples_bioinfo_melted_df = samples_bioinfo_df.melt(id_vars=['sample_id'], value_vars=['total_reads_r1', 'total_reads_r2'], var_name='Read Type', value_name='Total Reads')
-    st.bar_chart(data=samples_bioinfo_melted_df, x='sample_id', y='Total Reads', color='Read Type', use_container_width=True)
+                    chart = density_chart + vline
+                    st.altair_chart(chart, use_container_width=True)
 
-    st.subheader("Secondary Analysis:")
-    # Display a table with mean_coverage and cov_20x per sample in this run
-    samples_secondary_analysis_df = samples_bioinfo_df[['sample_id', 'sex', 'virtual_panel', 'mean_coverage', 'cov_20x', 'cov_38x', 'percent_on_target_reads', 'coverage_uniformity']]
-    st.dataframe(samples_secondary_analysis_df.rename(columns={
-        'sample_id': 'Sample ID',
-        'sex': 'Reported Sex',
-        'virtual_panel': 'Virtual Panel',
-        'mean_coverage': 'Mean Coverage',
-        'cov_20x': 'Coverage 20x (%)',
-        'cov_38x': 'Coverage 38x (%)',
-        'percent_on_target_reads': 'Percent On Target Reads (%)',
-        'coverage_uniformity': 'Coverage Uniformity (%)'
-    }), use_container_width=True)
+                    st.caption(
+                        f"The distribution is based on {len(df_plot)} runs with the same instrument model and sequencing chemistry as the selected run."
+                        f" The red line indicates the value of the selected metric for the run {selected_run_id} ({selected_day_id})."
+                    )

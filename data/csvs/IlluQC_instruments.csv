@@ -1,7 +1,0 @@
-instrument_id,instrument_name,instrument_model,instrument_type
-LH00565,NovaSeq X Plus,NovaSeq X Plus,Sequencer
-VH00757,NextSeq 2000,NextSeq 2000,Sequencer
-M00289,MiSeq 0,MiSeq,Sequencer
-M04372,MiSeq 1,MiSeq,Sequencer
-M06751,MiSeq 2,MiSeq,Sequencer
-SH00551,MiSeq i100 Plus,MiSeq i100,Sequencer
