@@ -142,53 +142,6 @@ def render_run_tab(run_id, run_metrics_df, run_info):
             f"**{len(available_metrics)}** metrics"
         )
 
-        # --- Metrics table (wide format) ---
-        st.subheader("Metrics table")
-
-        read_filter = st.radio(
-            "Read:",
-            ["All"] + available_reads,
-            horizontal=True,
-            key=f"table_read_{run_id}",
-        )
-
-        table_df = run_metrics_df.copy()
-        if read_filter != "All":
-            table_df = table_df[table_df["read"] == read_filter]
-
-        pivot_index = ["read"] if read_filter == "All" else []
-
-        if pivot_index:
-            wide_df = (
-                table_df.pivot_table(
-                    index=pivot_index,
-                    columns="metric_label",
-                    values="value_number",
-                    aggfunc="first",
-                )
-                .reset_index()
-            )
-        else:
-            wide_df = (
-                table_df.pivot_table(
-                    columns="metric_label",
-                    values="value_number",
-                    aggfunc="first",
-                )
-                .to_frame()
-                .T.reset_index(drop=True)
-            )
-
-        st.dataframe(
-            wide_df,
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                col: st.column_config.NumberColumn(format="%.2f")
-                for col in wide_df.columns
-                if col not in {"read"}
-            },
-        )
 
     # ---------------------------------------------------------------
     # RIGHT – density plot (library cohort) for a selected metric

@@ -83,7 +83,7 @@ NUM_SAMPLES_PER_RUN = 24
 LIBRARIES = [
     {"library_id": "TEST_LIB_WES_TWIST",  "library_name": "Twist Exome 2.0 + CBM Spike-in", "library_version": "2.0", "library_type": "WES"},
     {"library_id": "TEST_LIB_WES_AGIL",   "library_name": "Agilent SureSelect XT HS2 v8",   "library_version": "8.0", "library_type": "WES"},
-    {"library_id": "TEST_LIB_PANEL_AMP",   "library_name": "AmpliSeq HiFi Panel",            "library_version": "1.0", "library_type": "Panel"}
+    {"library_id": "TEST_LIB_PANEL_AMP",   "library_name": "AmpliSeq Panel",            "library_version": "1.0", "library_type": "Panel"}
 ]
 
 # Metric ranges per platform

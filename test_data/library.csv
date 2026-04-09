@@ -1,4 +1,4 @@
 library_id,library_name,library_version,library_type
 TEST_LIB_WES_TWIST,Twist Exome 2.0 + CBM Spike-in,2.0,WES
 TEST_LIB_WES_AGIL,Agilent SureSelect XT HS2 v8,8.0,WES
-TEST_LIB_PANEL_AMP,AmpliSeq HiFi Panel,1.0,Panel
+TEST_LIB_PANEL_AMP,AmpliSeq Panel,1.0,Panel
