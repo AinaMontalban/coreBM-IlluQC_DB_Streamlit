@@ -215,7 +215,7 @@ def main():
         with open(csv_path, "r", newline="", encoding="utf-8-sig") as f:
             reader = csv.DictReader(f)
             for idx, row in enumerate(reader):
-                values = [row[col] for col in insert_cols]
+                values = [row[col] if row[col] != "" else None for col in insert_cols]
                 logging.debug(f"Row {idx}: {values}")
                 batch.append(values)
                 if len(batch) >= batch_size:

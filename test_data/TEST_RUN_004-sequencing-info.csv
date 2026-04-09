@@ -1,0 +1,2 @@
+run_id,run_folder,run_description,day_id,instrument_id,platform_id,sequencing_chemistry_id,num_cycles,num_samples
+TEST_RUN_004,260325_LH00565_0901_000000000-TESTCC,EXOME,2026-03-25,LH00565,ILLUMINA,20066617_20083896,300,24

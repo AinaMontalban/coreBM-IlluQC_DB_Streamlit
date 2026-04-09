@@ -2,21 +2,10 @@
 
 Every public function accepts a SQLAlchemy *engine* (or connection) as its
 first argument, plus optional filter parameters, and returns a DataFrame.
-
-Results are cached with ``@st.cache_data(ttl=300)`` so that repeated
-Streamlit reruns do not hit the database unnecessarily.
 """
 
 import pandas as pd
-import streamlit as st
 from sqlalchemy import text
-
-
-# ---------------------------------------------------------------------------
-# Cache TTL (seconds) – shared across all queries
-# ---------------------------------------------------------------------------
-
-_TTL = 300  # 5 minutes
 
 
 # ---------------------------------------------------------------------------
@@ -33,11 +22,10 @@ def _read(engine, sql, **params):
 # Platforms
 # ---------------------------------------------------------------------------
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
-def get_platforms(_engine):
+def get_platforms(engine):
     """Distinct platform_ids present in sequencing_run."""
     return _read(
-        _engine,
+        engine,
         "SELECT DISTINCT platform_id FROM sequencing_run ORDER BY platform_id",
     )
 
@@ -46,8 +34,7 @@ def get_platforms(_engine):
 # Sequencing runs (with instrument info)
 # ---------------------------------------------------------------------------
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
-def get_runs_with_instruments(_engine, *, year=None):
+def get_runs_with_instruments(engine, *, year=None):
     """Sequencing runs joined with instruments.
 
     Parameters
@@ -61,7 +48,7 @@ def get_runs_with_instruments(_engine, *, year=None):
             FROM sequencing_run srq
             JOIN instruments inst ON srq.instrument_id = inst.instrument_id
         """
-        df = _read(_engine, sql)
+        df = _read(engine, sql)
     else:
         sql = """
             SELECT *
@@ -69,123 +56,200 @@ def get_runs_with_instruments(_engine, *, year=None):
             JOIN instruments inst ON srq.instrument_id = inst.instrument_id
             WHERE srq.day_id BETWEEN :start AND :end
         """
-        df = _read(_engine, sql, start=f"{year}-01-01", end=f"{year}-12-31")
+        df = _read(engine, sql, start=f"{year}-01-01", end=f"{year}-12-31")
 
     return df.loc[:, ~df.columns.duplicated()]
 
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
-def get_runs_with_chemistry(_engine):
-    """Sequencing runs joined with instruments AND sequencing_chemistry."""
+def get_runs_with_chemistry(engine):
+    """Sequencing runs joined with instruments, chemistry name AND attributes.
+
+    The ``sequencing_chemistry`` table provides the human-readable
+    ``chemistry_name``.  Long-format chemistry attributes (per *run_id*)
+    are pivoted into extra columns using the ``attribute_name`` from the
+    definitions table.  LEFT JOINs ensure runs without chemistry data
+    are still returned.
+    """
     sql = """
-        SELECT srq.*, sc.*, inst.instrument_model, inst.instrument_name
+        SELECT srq.*,
+               inst.instrument_model, inst.instrument_name,
+               sc.chemistry_name,
+               cad.attribute_name,
+               sca.attribute_value
         FROM sequencing_run srq
-        JOIN sequencing_chemistry sc
+        LEFT JOIN sequencing_chemistry sc
           ON srq.sequencing_chemistry_id = sc.sequencing_chemistry_id
-        JOIN instruments inst
+        LEFT JOIN instruments inst
           ON srq.instrument_id = inst.instrument_id
+        LEFT JOIN sequencing_chemistry_attributes sca
+          ON srq.run_id = sca.run_id
+        LEFT JOIN chemistry_attribute_definitions cad
+          ON sca.attribute_id = cad.attribute_id
     """
-    df = _read(_engine, sql)
-    return df.loc[:, ~df.columns.duplicated()]
+    df = _read(engine, sql)
+    df = df.loc[:, ~df.columns.duplicated()]
+    # Pivot long-format attributes into wide columns
+    if "attribute_name" in df.columns and not df["attribute_name"].isna().all():
+        run_cols = [c for c in df.columns if c not in ("attribute_name", "attribute_value")]
+        attrs = (
+            df[["run_id", "day_id", "attribute_name", "attribute_value"]]
+            .drop_duplicates()
+            .pivot_table(
+                index=["run_id", "day_id"],
+                columns="attribute_name",
+                values="attribute_value",
+                aggfunc="first",
+            )
+            .reset_index()
+        )
+        base = df[run_cols].drop_duplicates(subset=["run_id", "day_id"])
+        df = base.merge(attrs, on=["run_id", "day_id"], how="left")
+    else:
+        df = df.drop(columns=["attribute_name", "attribute_value"], errors="ignore")
+    return df
 
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
-def get_runs_with_chemistry_protocols(_engine):
-    """Sequencing runs joined with instruments, chemistry – for Protocols page."""
-    sql = """
-        SELECT srq.*, inst.instrument_model, inst.instrument_name,
-               sc.flowcell_name, sc.reagent_kit_name
-        FROM sequencing_run srq
-        JOIN instruments inst ON srq.instrument_id = inst.instrument_id
-        JOIN sequencing_chemistry sc
-          ON srq.sequencing_chemistry_id = sc.sequencing_chemistry_id
-    """
-    df = _read(_engine, sql)
-    return df.loc[:, ~df.columns.duplicated()]
+def get_runs_with_chemistry_protocols(engine):
+    """Sequencing runs joined with instruments, chemistry – for Protocols page.
+
+    Returns the same pivoted attributes as ``get_runs_with_chemistry``."""
+    return get_runs_with_chemistry(engine)
 
 
 # ---------------------------------------------------------------------------
 # Sequencing QC metrics
 # ---------------------------------------------------------------------------
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
-def get_sequencing_metrics(_engine):
+def get_sequencing_metrics(engine):
     """All sequencing QC metric values with their definitions."""
     sql = """
         SELECT sqm.run_id, sqm.day_id, sqm.metric_id, sqm.value_number,
-               qmd.metric_name, qmd.unit, qmd.platform_id AS metric_platform_id
+               qmd.metric_name, qmd.display_label, qmd.unit,
+               qmd.platform_id AS metric_platform_id
         FROM sequencing_qc_metrics sqm
         LEFT JOIN qc_metric_definitions qmd ON sqm.metric_id = qmd.metric_id
     """
-    return _read(_engine, sql)
+    return _read(engine, sql)
 
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
-def get_sequencing_metrics_recent(_engine, *, limit=200):
-    """Most recent sequencing QC metric values (for the Database explorer)."""
+# ---------------------------------------------------------------------------
+# Sample QC metrics
+# ---------------------------------------------------------------------------
+
+def get_sample_qc_metrics_for_run(engine, run_id):
+    """All per-sample QC metrics for a given run, joined with definitions.
+
+    Parameters
+    ----------
+    run_id : str
+        The sequencing run identifier.
+    """
     sql = """
-        SELECT sqm.run_id, sqm.day_id, sqm.metric_id, sqm.value_number,
-               qmd.metric_name, qmd.unit, qmd.platform_id AS metric_platform_id
-        FROM sequencing_qc_metrics sqm
+        SELECT sqm.sample_id, sqm.run_id, sqm.read,
+               sqm.metric_id, sqm.value_number,
+               qmd.metric_name, qmd.display_label, qmd.unit
+        FROM sample_qc_metrics sqm
         LEFT JOIN qc_metric_definitions qmd ON sqm.metric_id = qmd.metric_id
-        ORDER BY sqm.day_id DESC
-        LIMIT :lim
+        WHERE sqm.run_id = :run_id
+        ORDER BY sqm.sample_id, sqm.read, qmd.metric_name
     """
-    return _read(_engine, sql, lim=limit)
+    return _read(engine, sql, run_id=run_id)
 
 
-# ---------------------------------------------------------------------------
-# Bioinfo analyses
-# ---------------------------------------------------------------------------
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
-def get_bioinfo_analyses(_engine, *, year=None):
-    """Sample-level bioinfo analyses QC, optionally filtered by year."""
-    if year is None:
-        sql = "SELECT * FROM sample_bioinfo_analyses_qc"
-        return _read(_engine, sql)
+def get_sample_qc_sample_ids(engine):
+    """Return distinct sample_id values that have sample QC data, sorted."""
     sql = """
-        SELECT * FROM sample_bioinfo_analyses_qc
-        WHERE day_id BETWEEN :start AND :end
+        SELECT DISTINCT sample_id
+        FROM sample_qc_metrics
+        ORDER BY sample_id
     """
-    return _read(_engine, sql, start=f"{year}-01-01", end=f"{year}-12-31")
+    return _read(engine, sql)
 
 
+def get_sample_qc_metrics_for_sample(engine, sample_id):
+    """All QC metrics for a given sample across all runs, with run info.
+
+    Parameters
+    ----------
+    sample_id : str
+        The sample identifier to look up.
+    """
+    sql = """
+        SELECT sqm.sample_id, sqm.run_id, sqm.read,
+               sqm.metric_id, sqm.value_number,
+               qmd.metric_name, qmd.display_label, qmd.unit,
+               sr.day_id, sr.run_description, sr.platform_id,
+               inst.instrument_model, inst.instrument_name,
+               l.library_id, l.library_name, l.library_type,
+               s.sex, s.virtual_panel
+        FROM sample_qc_metrics sqm
+        LEFT JOIN qc_metric_definitions qmd ON sqm.metric_id = qmd.metric_id
+        JOIN sequencing_run sr ON sqm.run_id = sr.run_id
+        LEFT JOIN instruments inst ON sr.instrument_id = inst.instrument_id
+        LEFT JOIN sample_library sl
+          ON sqm.sample_id = sl.sample_id AND sqm.run_id = sl.run_id
+        LEFT JOIN library l ON sl.library_id = l.library_id
+        LEFT JOIN samples s ON sqm.sample_id = s.sample_id
+        WHERE sqm.sample_id = :sample_id
+        ORDER BY sr.day_id DESC, sqm.run_id, sqm.read, qmd.metric_name
+    """
+    return _read(engine, sql, sample_id=sample_id)
+
+
+def get_sample_qc_metrics_by_library(engine, library_id, run_id):
+    """All per-sample QC metrics for samples sharing a library in a run.
+
+    Used to build the density/distribution chart on the Samples page so the
+    user can see where their sample sits relative to the library cohort.
+
+    Parameters
+    ----------
+    library_id : str
+        The library identifier (from the ``library`` table).
+    run_id : str
+        The sequencing run identifier.
+    """
+    sql = """
+        SELECT sqm.sample_id, sqm.run_id, sqm.read,
+               sqm.metric_id, sqm.value_number,
+               qmd.metric_name, qmd.display_label, qmd.unit
+        FROM sample_qc_metrics sqm
+        JOIN sample_library sl
+          ON sqm.sample_id = sl.sample_id AND sqm.run_id = sl.run_id
+        LEFT JOIN qc_metric_definitions qmd ON sqm.metric_id = qmd.metric_id
+        WHERE sl.library_id = :library_id
+          AND sqm.run_id     = :run_id
+        ORDER BY sqm.sample_id, sqm.read, qmd.metric_name
+    """
+    return _read(engine, sql, library_id=library_id, run_id=run_id)
 
 
 # ---------------------------------------------------------------------------
-# Simple dimension-table helpers (Database explorer page)
+# Metric display-label maps (driven by qc_metric_definitions table)
 # ---------------------------------------------------------------------------
 
-@st.cache_data(ttl=_TTL, show_spinner=False)
-def get_table(_engine, table: str, *, order_by=None, limit=None):
-    """Read an entire table with optional ORDER BY and LIMIT.
+def get_metric_label_maps(engine):
+    """Build metric display-label maps from qc_metric_definitions.
 
-    Only allows table names from an explicit allow-list to prevent SQL
-    injection.
+    Returns
+    -------
+    run_label_map : dict
+        ``{metric_name: display_label}`` for scope='run' metrics.
+    sample_label_map : dict
+        ``{metric_name: display_label}`` for scope='sample' metrics.
     """
-    allowed = {
-        "samples",
-        "instruments",
-        "library",
-        "protocols",
-        "day",
-        "extraction_qc",
-        "library_qc",
-        "sequencing_run",
-        "sequencing_qc_metrics",
-        "qc_metric_definitions",
-        "sequencing_platforms",
-        "sequencing_chemistry",
-        "sample_bioinfo_analyses_qc",
-        "schema_metadata",
-    }
-    if table not in allowed:
-        raise ValueError(f"Table '{table}' is not in the allow-list.")
+    sql = """
+        SELECT metric_id, metric_name, display_label, scope, platform_id
+        FROM qc_metric_definitions
+        WHERE display_label IS NOT NULL
+    """
+    df = _read(engine, sql)
 
-    sql = f"SELECT * FROM {table}"
-    if order_by:
-        sql += f" ORDER BY {order_by}"
-    if limit:
-        sql += f" LIMIT {limit}"
-    return _read(_engine, sql)
+    run_rows = df[df["scope"] == "run"]
+    sample_rows = df[df["scope"] == "sample"]
+
+    run_label_map = dict(zip(run_rows["metric_name"], run_rows["display_label"]))
+    sample_label_map = dict(zip(sample_rows["metric_name"], sample_rows["display_label"]))
+
+    return run_label_map, sample_label_map

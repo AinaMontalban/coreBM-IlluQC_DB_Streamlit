@@ -1,11 +1,10 @@
 import streamlit as st
 
 st.set_page_config(
-    page_title="IlluQC Database App",
-    page_icon="🧬",
+    page_title="IlluQC Database App"
 )
 
-st.write("# 🧬 IlluQC Database App")
+st.write("# IlluQC Database App")
 
 st.markdown(
     """
@@ -23,10 +22,11 @@ with st.expander("ℹ️ How to use this app", expanded=True):
 
         | Page | Description |
         |------|-------------|
-        | **📊 Summary** | High-level activity overview. Filter by **year** and **platform** to see the number of runs, a treemap of protocols, and a bar chart of monthly activity. |
-        | **🔬 Protocols** | Explore sequencing metrics **over time** for a given protocol. Select an instrument model, chemistry combination, and QC metric, then adjust the year-range slider to zoom in. |
-        | **🏃 Runs** | Inspect **individual runs**. Pick a run to see its metadata and compare a chosen metric across all runs with a density plot. |
-        | **🗄️ Database** | Browse raw database tables (samples, instruments, library, protocols, QC metrics, etc.) for quick look-ups. |
+        | ** Summary** | High-level activity overview. Filter by **year** and **platform** to see the number of runs, a treemap of protocols, and a bar chart of monthly activity. |
+        | ** Protocols** | Explore sequencing metrics **over time** for a given protocol. Select an instrument model, chemistry combination, and QC metric, then adjust the year-range slider to zoom in. |
+        | ** Runs** | Inspect **individual runs**. Pick a run to see its metadata and compare a chosen metric across all runs with a density plot. |
+        | ** Samples** | Visualise **per-sample QC metrics** (FastQC) for a selected run. Box-plot distributions, per-sample bar charts, and R1 vs R2 scatter comparisons. |
+        | ** Database** | Browse raw database tables (samples, instruments, library, protocols, QC metrics, etc.) for quick look-ups. |
 
         ---
 
@@ -37,7 +37,9 @@ with st.expander("ℹ️ How to use this app", expanded=True):
            spot regressions.
         3. Use **Runs** to drill into a suspicious run and compare it against
            historical data.
-        4. Check **Database** if you need to look up raw records or verify
+        4. Open **Samples** to inspect per-sample FastQC metrics within a run
+           and compare R1 vs R2 quality.
+        5. Check **Database** if you need to look up raw records or verify
            uploaded data.
 
         ---

@@ -1,0 +1,2 @@
+run_id,run_folder,run_description,day_id,instrument_id,platform_id,sequencing_chemistry_id,num_cycles,num_samples
+TEST_RUN_003,260320_S5_0050_TEST,AMPLISEQ,2026-03-20,GSS5PL-0146,THERMOFISHER,530_500,300,24

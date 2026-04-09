@@ -1,0 +1,188 @@
+-- IlluQC Database Schema (PostgreSQL) - Adapted for Multi-Platform Sequencing QC
+
+-- =========================
+-- Dimension Tables
+-- =========================
+
+CREATE TABLE IF NOT EXISTS sequencing_platforms (
+    platform_id   TEXT PRIMARY KEY,      -- e.g. 'ILLUMINA', 'THERMOFISHER'
+    platform_name TEXT NOT NULL
+);
+
+-- Optional seed values
+INSERT INTO sequencing_platforms(platform_id, platform_name) VALUES
+('ILLUMINA', 'Illumina'),
+('THERMOFISHER', 'Thermo Fisher (Ion Torrent)')
+ON CONFLICT (platform_id) DO NOTHING;
+
+
+CREATE TABLE IF NOT EXISTS instruments (
+    instrument_id TEXT PRIMARY KEY,
+    instrument_name TEXT,
+    instrument_model TEXT,
+    instrument_type TEXT,
+    platform_id TEXT,                    -- NEW
+    FOREIGN KEY (platform_id) REFERENCES sequencing_platforms(platform_id)
+);
+
+
+-- Dictionary of chemistry attribute types (long-format dimension)
+CREATE TABLE IF NOT EXISTS chemistry_attribute_definitions (
+    attribute_id TEXT PRIMARY KEY,        -- e.g. 'FLOWCELL_NAME', 'CHIP_TYPE'
+    attribute_name TEXT NOT NULL,         -- human-readable name
+    platform_id TEXT,                     -- NULL = shared across platforms
+    description TEXT,
+    FOREIGN KEY (platform_id) REFERENCES sequencing_platforms(platform_id)
+);
+
+-- Seed attribute definitions for Illumina
+INSERT INTO chemistry_attribute_definitions(attribute_id, attribute_name, platform_id, description) VALUES
+('FLOWCELL_NAME',           'Flowcell name',            'ILLUMINA',     'Illumina flowcell / dry-cartridge name'),
+('FLOWCELL_PART_NUMBER',    'Flowcell part number',     'ILLUMINA',     'Illumina flowcell part number'),
+('REAGENT_KIT_NAME',        'Reagent kit name',         'ILLUMINA',     'Illumina reagent / wet-cartridge name'),
+('REAGENT_KIT_PART_NUMBER', 'Reagent kit part number',  'ILLUMINA',     'Illumina reagent kit part number')
+ON CONFLICT (attribute_id) DO NOTHING;
+
+-- Seed attribute definitions for Thermo Fisher / Ion Torrent
+INSERT INTO chemistry_attribute_definitions(attribute_id, attribute_name, platform_id, description) VALUES
+('CHIP_TYPE',               'Chip type',                'THERMOFISHER', 'Ion Torrent chip type (e.g. 530, 520)'),
+('CHIP_BARCODE',            'Chip barcode',             'THERMOFISHER', 'Ion Torrent chip barcode'),
+('CHEF_REAGENTS_PART',      'Chef reagents part',       'THERMOFISHER', 'Ion Chef reagents part number'),
+('TEMPLATING_KIT_NAME',     'Templating kit name',      'THERMOFISHER', 'Ion Chef templating kit'),
+('LIBRARY_KIT_NAME',        'Library kit name',         'THERMOFISHER', 'Library preparation kit'),
+('SEQUENCING_KIT_NAME',     'Sequencing kit name',      'THERMOFISHER', 'Ion Torrent sequencing kit')
+ON CONFLICT (attribute_id) DO NOTHING;
+
+-- Actual attribute values (long format: one row per run × attribute)
+CREATE TABLE IF NOT EXISTS sequencing_chemistry_attributes (
+    run_id TEXT NOT NULL,
+    attribute_id TEXT NOT NULL,
+    attribute_value TEXT,
+    UNIQUE (run_id, attribute_id),
+    FOREIGN KEY (attribute_id) REFERENCES chemistry_attribute_definitions(attribute_id)
+);
+
+
+-- Date dimension: day_id is the date (YYYY-MM-DD)
+CREATE TABLE IF NOT EXISTS day (
+    day_id DATE PRIMARY KEY,
+    operator TEXT
+);
+
+-- Populate day table with dates from 2020-01-01 to 2050-12-31
+INSERT INTO day (day_id)
+SELECT d::date
+FROM generate_series('2020-01-01'::date, '2050-12-31'::date, interval '1 day') AS t(d)
+ON CONFLICT DO NOTHING;
+
+
+-- -------------------------
+-- Multi-platform sequencing QC (core + metrics)
+-- -------------------------
+
+-- Sequencing chemistry look-up (pre-defined chemistry names)
+CREATE TABLE IF NOT EXISTS sequencing_chemistry (
+    sequencing_chemistry_id TEXT PRIMARY KEY,
+    chemistry_name TEXT NOT NULL,
+    platform_id TEXT,
+    FOREIGN KEY (platform_id) REFERENCES sequencing_platforms(platform_id)
+);
+
+-- Core run-level record (platform-agnostic)
+CREATE TABLE IF NOT EXISTS sequencing_run (
+    run_id TEXT NOT NULL,
+    run_folder TEXT NOT NULL,
+    run_description TEXT,
+    day_id DATE NOT NULL,
+    instrument_id TEXT,
+    platform_id TEXT NOT NULL,
+    sequencing_chemistry_id TEXT,
+
+    -- Common fields (optional; fill when available)
+    num_cycles INTEGER,
+    num_samples INTEGER,
+
+    PRIMARY KEY (run_id, day_id),
+    FOREIGN KEY (day_id) REFERENCES day(day_id),
+    FOREIGN KEY (instrument_id) REFERENCES instruments(instrument_id),
+    FOREIGN KEY (platform_id) REFERENCES sequencing_platforms(platform_id),
+    FOREIGN KEY (sequencing_chemistry_id) REFERENCES sequencing_chemistry(sequencing_chemistry_id)
+);
+
+-- Metric dictionary (defines what a metric is, its unit and type)
+CREATE TABLE IF NOT EXISTS qc_metric_definitions (
+    metric_id TEXT PRIMARY KEY,          -- e.g. 'Q30', 'ION_Q20_BASES_PCT'
+    metric_name TEXT NOT NULL,
+    display_label TEXT,                  -- human-friendly label shown in the UI (e.g. 'Cluster Density (K/mm²)')
+    scope TEXT NOT NULL DEFAULT 'run',   -- 'run' or 'sample'
+    unit TEXT,
+    value_type TEXT NOT NULL DEFAULT 'number', -- 'number' or 'text'
+    platform_id TEXT,                    -- NULL = shared across platforms
+    description TEXT,
+    FOREIGN KEY (platform_id) REFERENCES sequencing_platforms(platform_id)
+);
+
+-- Actual metric values (long format; avoids schema changes per platform)
+CREATE TABLE IF NOT EXISTS sequencing_qc_metrics (
+    run_id TEXT NOT NULL,
+    day_id DATE NOT NULL,
+    metric_id TEXT NOT NULL,
+    value_number DOUBLE PRECISION,
+    PRIMARY KEY (run_id, day_id, metric_id),
+    FOREIGN KEY (run_id, day_id) REFERENCES sequencing_run(run_id, day_id),
+    FOREIGN KEY (metric_id) REFERENCES qc_metric_definitions(metric_id)
+);
+
+-- Per-sample QC metrics (long format; one row per sample × read × metric)
+CREATE TABLE IF NOT EXISTS sample_qc_metrics (
+    sample_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    read TEXT NOT NULL,                  -- 'R1', 'R2', or '' if not applicable
+    metric_id TEXT NOT NULL,
+    value_number DOUBLE PRECISION,
+    PRIMARY KEY (sample_id, run_id, read, metric_id),
+    FOREIGN KEY (metric_id) REFERENCES qc_metric_definitions(metric_id)
+);
+
+-- Example Thermo Fisher / Ion Torrent metric definitions (edit to match your export fields)
+INSERT INTO qc_metric_definitions(metric_id, metric_name, display_label, platform_id, unit, value_type, description) VALUES
+('READS_TOTAL',        'total_reads',        'Total Reads',            'THERMOFISHER', 'reads', 'number', 'Total reads produced'),
+('READ_LENGTH_MEAN',   'mean_read_length',   'Mean Read Length (bp)',   'THERMOFISHER', 'bp',    'number', 'Average read length'),
+('Q20_BASES_PCT',      'q20_bases_pct',      '% Bases ≥ Q20',         'THERMOFISHER', '%',     'number', 'Percent bases with Q>=20'),
+('LOADING_PCT',        'loading_pct',        'Loading %',              'THERMOFISHER', '%',     'number', 'Chip loading percentage'),
+('ADDRESS_AVAILABLE',  'address_available',  'Address Available',      'THERMOFISHER', 'Wells', 'number', 'Well Addresses available')
+ON CONFLICT (metric_id) DO NOTHING;
+
+-- Example Illumina metric definitions (maps to your current columns)
+INSERT INTO qc_metric_definitions(metric_id, metric_name, display_label, platform_id, unit, value_type, description) VALUES
+('CLUSTER_DENSITY',        'cluster_density',    'Cluster Density (K/mm²)',  'ILLUMINA', 'k/mm2', 'number', 'Cluster density'),
+('CLUSTER_PF_PCT',         'cluster_pf',         '% PF Clusters',           'ILLUMINA', '%',     'number', 'Percent clusters passing filter'),
+('Q30_PCT',                'q30',                '% Q30 Reads',             'ILLUMINA', '%',     'number', 'Percent bases with Q>=30'),
+('YIELD',                  'yield',              'Yield (Gb)',              'ILLUMINA', 'GB',    'number', 'Total yield'),
+('PHIX_ALIGNED_PCT',       'percent_phix_aligned','% PhiX Aligned',         'ILLUMINA', '%',     'number', 'Percent PhiX aligned')
+ON CONFLICT (metric_id) DO NOTHING;
+
+-- FastQC per-sample numeric metric definitions (scope = sample)
+INSERT INTO qc_metric_definitions(metric_id, metric_name, display_label, scope, unit, value_type, description) VALUES
+('FASTQC_TOTAL_SEQUENCES',       'Total sequences',       'Total Sequences',             'sample', 'reads',  'number', 'Total number of sequences in FASTQ'),
+('FASTQC_PERCENT_FAILS',         'Percent fails',         'Percent Fails (%)',           'sample', '%',      'number', 'Percentage of sequences failing QC checks'),
+('FASTQC_GC_PCT',                'Percent GC',            'GC Content (%)',              'sample', '%',      'number', 'GC content percentage'),
+('FASTQC_PERCENT_DUPLICATES',    'Percent duplicates',    'Duplicates (%)',              'sample', '%',      'number', 'Percentage of duplicate reads'),
+('FASTQC_AVG_SEQUENCE_LENGTH',   'Avg sequence length',   'Avg Sequence Length (bp)',    'sample', 'bp',     'number', 'Average sequence length')
+ON CONFLICT (metric_id) DO NOTHING;
+
+
+
+-- =========================
+-- Metadata
+-- =========================
+
+CREATE TABLE IF NOT EXISTS schema_metadata (
+    key TEXT PRIMARY KEY,
+    value TEXT
+);
+
+INSERT INTO schema_metadata (key, value) VALUES
+('schema_name', 'IlluQC Database'),
+('schema_version', '1.4-multiplatform-longformat-sample')
+ON CONFLICT (key) DO NOTHING;

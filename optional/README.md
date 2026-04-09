@@ -2,6 +2,40 @@
 
 This project provides a reproducible environment for managing and visualizing IlluQC data using PostgreSQL, Streamlit, and Docker Compose.
 
+## Repository structure
+
+| Path | Description |
+|---|---|
+| `docker-compose.yml` | Docker Compose orchestration (services: `db`, `streamlit`, `loader`) |
+| `README.md` | Project README (root) |
+| **`app/`** | **Streamlit application** |
+| `app/app.py` | Main Streamlit entry-point (home page) |
+| `app/db.py` | Database engine / connection helper |
+| `app/queries.py` | Centralised SQL queries (runs, metrics, samples) |
+| `app/constants.py` | Column label mappings and metric label translations |
+| `app/upload_CSV.py` | Generic CSV → PostgreSQL loader (any table) |
+| `app/load_sequencing_metrics.py` | Helper for bulk-loading sequencing metrics |
+| `app/requirements.txt` | Python dependencies for the Streamlit container |
+| `app/Dockerfile` | Container image for the Streamlit app |
+| `app/.streamlit/secrets.toml` | Streamlit connection secrets (not committed) |
+| `app/.streamlit/secrets.toml.example` | Example secrets template |
+| **`app/pages/`** | **Streamlit dashboard pages** |
+| `app/pages/1_Summary.py` | Global summary: KPIs, runs-per-platform, instruments |
+| `app/pages/2_Protocols.py` | Per-protocol breakdown, time-series & correlation plots |
+| `app/pages/3_Runs.py` | Individual run detail, metrics table & density plots |
+| `app/pages/5_Database.py` | Raw table explorer (runs, instruments, chemistry, …) |
+| **`init_db/`** | **Database initialisation** |
+| `init_db/IlluQC_Database_schema_postgres_multiplatform.sql` | DDL schema (multi-platform, long-format chemistry attributes) |
+| `init_db/required_fields.json` | Required / allowed columns per table (used by `upload_CSV.py`) |
+| **`tests/`** | **Test suite** |
+| `tests/test_upload_csv.py` | Unit tests for the CSV upload logic |
+| **`optional/`** | **Optional / helper scripts** |
+| `optional/bulk_load_data.sh` | Shell script to bulk-load run CSVs into the DB |
+| `optional/4_Samples.py` | (Optional) Samples dashboard page |
+| `optional/5_Sequencers.py` | (Optional) Sequencers dashboard page |
+| `optional/README.md` | This file – project documentation |
+| **`data/`** | Mount-point for CSV data files (empty by default) |
+
 ## Features
 - PostgreSQL database with IlluQC schema (see `init_db/IlluQC_Database_schema_postgres.sql`)
 - Streamlit dashboard for interactive data exploration (`app/streamlit_app.py`)
@@ -28,15 +62,7 @@ docker-compose exec db psql -U postgres -d exampledb -f /docker-entrypoint-initd
 
 Use the advanced loader (`upload_CSV.py`):
 ```sh
-docker-compose run --rm loader python /app/upload_CSV.py \
-	--host db --port 5432 --db illuqcdb --user postgres --password postgres \
-	--table samples --csv /app/data/csvs/IlluQC_samples.csv \
-	--fields /app/init_db/required_fields.json
 
-docker-compose run --rm loader python /app/upload_CSV.py \
-	--host db --port 5432 --db illuqcdb --user postgres --password postgres \
-	--table instruments --csv /app/data/csvs/IlluQC_instruments.csv \
-	--fields /app/init_db/required_fields.json
 
 docker-compose run --rm \
   -v "$(pwd)/../real_data:/app/real_data:ro" \
@@ -51,6 +77,8 @@ docker-compose run --rm \
         --host db --port 5432 --db illuqcdb --user postgres --password postgres \
         --table sequencing_chemistry --csv "/app/real_data/sequencing_chemistry.csv" \
         --fields /app/init_db/required_fields.json
+
+
 
 docker-compose run --rm \
 	 -v "$(pwd)/../real_data:/app/real_data:ro" \

@@ -16,7 +16,7 @@ def get_engine():
         db = st.secrets["postgres"]
     except KeyError:
         st.error(
-            "🔑 **Database credentials not found.**  "
+            "**Database credentials not found.**  "
             "Make sure `.streamlit/secrets.toml` contains a `[postgres]` section "
             "with `host`, `port`, `dbname`, `user`, and `password`."
         )

@@ -1,0 +1,9 @@
+instrument_id,instrument_name,instrument_model,instrument_type,platform_id
+LH00565,NovaSeq X Plus,NovaSeq X Plus,Sequencer,ILLUMINA
+VH00757,NextSeq 2000,NextSeq 2000,Sequencer,ILLUMINA
+M00289,MiSeq 0,MiSeq,Sequencer,ILLUMINA
+M04372,MiSeq 1,MiSeq,Sequencer,ILLUMINA
+M06751,MiSeq 2,MiSeq,Sequencer,ILLUMINA
+SH00551,MiSeq i100 Plus,MiSeq i100,Sequencer,ILLUMINA
+GSS5PL-0146,S5 1,S5,Sequencer,THERMOFISHER
+GNXS-0763,Genexus 2,Genexus,Sequencer,THERMOFISHER

@@ -1,0 +1,2 @@
+run_id,run_folder,run_description,day_id,instrument_id,platform_id,sequencing_chemistry_id,num_cycles,num_samples
+TEST_RUN_002,260310_M06751_0200_000000000-TESTBB,HLA,2026-03-10,M06751,ILLUMINA,15033572_15035218,150,24

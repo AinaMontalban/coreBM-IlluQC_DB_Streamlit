@@ -1,0 +1,2 @@
+run_id,run_folder,run_description,day_id,instrument_id,platform_id,sequencing_chemistry_id,num_cycles,num_samples
+TEST_RUN_001,260301_M00289_0900_000000000-TESTAA,HLA,2026-03-01,M00289,ILLUMINA,15033572_15035217,300,24
